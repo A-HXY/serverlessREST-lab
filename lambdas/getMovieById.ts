@@ -1,14 +1,15 @@
 import { APIGatewayProxyHandlerV2 } from "aws-lambda";
-
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient,GetCommand,QueryCommand, } from "@aws-sdk/lib-dynamodb";
 
 const ddbDocClient = createDDbDocClient();
 
-export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {     // Note change
+export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {     
   try {
     console.log("[EVENT]", JSON.stringify(event));
     const pathParameters  = event?.pathParameters;
+    const queryParams = event?.queryStringParameters;
+
     const movieId = pathParameters?.movieId ? parseInt(pathParameters.movieId) : undefined;
 
     if (!movieId) {
@@ -28,6 +29,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {    
       })
     );
     console.log("GetCommand response: ", commandOutput);
+
     if (!commandOutput.Item) {
       return {
         statusCode: 404,
@@ -37,9 +39,16 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {    
         body: JSON.stringify({ Message: "Invalid movie Id" }),
       };
     }
-    const body = {
+
+    const responseBody: any = {
       data: commandOutput.Item,
     };
+
+    if (queryParams?.cast === "true") {
+      console.log(`Fetching cast for movieId: ${movieId}`);
+      const castData = await getMovieCastData(movieId);
+      responseBody.cast = castData;
+    }
 
     // Return Response
     return {
@@ -47,7 +56,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {    
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(responseBody),
     };
   } catch (error: any) {
     console.log(JSON.stringify(error));
@@ -60,6 +69,19 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {    
     };
   }
 };
+
+async function getMovieCastData(movieId: number) {
+  const command = new QueryCommand({
+    TableName: process.env.MOVIE_CAST_TABLE, 
+    KeyConditionExpression: "movieId = :m",
+    ExpressionAttributeValues: {
+      ":m": movieId,
+    },
+  });
+
+  const { Items } = await ddbDocClient.send(command);
+  return Items || [];
+}
 
 function createDDbDocClient() {
   const ddbClient = new DynamoDBClient({ region: process.env.REGION });
